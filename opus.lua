@@ -97,8 +97,8 @@ end
 parseArgs(args)
 
 
-local inputRoot = path.normalize(path.resolve(uv.cwd(), values["--indir"].value))
-local outputRoot = path.normalize(path.resolve(uv.cwd(), values["--outdir"].value))
+local inputRoot = path.normalize(path.resolve(uv.cwd(), values["--indir"].value) .. "/")
+local outputRoot = path.normalize(path.resolve(uv.cwd(), values["--outdir"].value) .. "/")
 
 local DRY_RUN = flags["--dryrun"]
 local maxJobs = values["--maxjobs"].value    -- this feature was sponsored by me OOM'ing myself
