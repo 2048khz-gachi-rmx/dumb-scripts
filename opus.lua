@@ -230,10 +230,10 @@ function convert(pt, to)
 end
 
 function copy(pt, to)
-	--[[local newFd, ab1 = fs.openSync(to, "w")
+	local newFd, ab1 = fs.openSync(to, "w")
 	local oldFd, ab2 = fs.openSync(pt, "r")
 
-	fs.sendfile(newFd, oldFd, 0, 10e9, checkErr)]]
+	fs.sendfile(newFd, oldFd, 0, 10e9, checkErr)
 end
 
 
