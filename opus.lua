@@ -20,11 +20,25 @@ local removeMetadata = {
 	Arg parsing
 ]]
 
+local function patternValidator(pattern)
+	-- Validate the pattern
+	local ok = pcall(string.find, "", pattern)
+
+	if not ok then
+		return false, ("Invalid pattern: `%s`"):format(pattern)
+	else
+		return pattern
+	end
+end
+
+
 local values = { -- { default, type }
 	["--bitrate"] = {value = 160, type = "number"},
 	["--maxjobs"] = {value = 6, type = "number"},
 	["--outdir"] =  {value = "./output", type = "string"},
 	["--indir"] =   {value = uv.cwd(), type = "string"},
+	["--directorypattern"] = {value = ".", type = patternValidator},
+	["--filepattern"] = {value = ".", type = patternValidator},
 }
 
 local aliases = {
@@ -34,10 +48,17 @@ local aliases = {
 	["--output"] = "--outdir",
 	["-i"] = "--indir",
 	["--input"] = "--indir",
+	["-f"] = "--flatten",
+	["-c"] = "--convertonly",
+	["-fp"] = "--filepattern",
+	["-dp"] = "--directorypattern",
+	["--dirpattern"] = "--directorypattern",
 }
 
 local flags = {
 	["--dryrun"] = false,
+	["--flatten"] = false,
+	["--convertonly"] = true,
 }
 
 local parsers = {
@@ -72,12 +93,16 @@ local function parseArgs(args)
 				local convFn = type(valTbl.type) == "function" and valTbl.type or _G["to" .. valTbl.type]
 				if not convFn then error("invalid type in flag value: " .. valTbl.type) return end
 
-				valTbl.value = convFn(arg)
-				if valTbl.value == nil then
-					print(("invalid value (can't convert `%s` to %s:%s)"):format(arg, curFlag, valTbl.type))
+				local val, err = convFn(arg)
+
+				if val == nil then
+					local reasonStr = err or ("can't convert `%s` to %s"):format(arg, valTbl.type)
+					print(("invalid value for flag %s (%s)"):format(curFlag, reasonStr))
 					os.exit()
 					return
 				end
+
+				valTbl.value = val
 			end
 
 			if parsers[curFlag] then
@@ -103,6 +128,9 @@ local outputRoot = path.normalize(path.resolve(uv.cwd(), values["--outdir"].valu
 local DRY_RUN = flags["--dryrun"]
 local maxJobs = values["--maxjobs"].value    -- this feature was sponsored by me OOM'ing myself
 local opus_bitrate = values["--bitrate"].value
+local flatten = flags["--flatten"]
+local convOnly = flags["--convertonly"]
+local filePattern, dirPattern = values["--filepattern"].value, values["--directorypattern"].value
 
 print(("Converting from `%s`."):format(inputRoot))
 print(("Converting to %dkbps (%d simultaneous jobs)"):format(opus_bitrate, maxJobs))
@@ -230,6 +258,8 @@ function convert(pt, to)
 end
 
 function copy(pt, to)
+	if convOnly then return end
+
 	local newFd, ab1 = fs.openSync(to, "w")
 	local oldFd, ab2 = fs.openSync(pt, "r")
 
@@ -238,8 +268,17 @@ end
 
 
 function handleFile(pt)
-	local newDest = pt:gsub(inputRoot:EscapePatterns(), outputRoot)
-	fs.mkdirpSync(path.dirname(newDest))
+	local newDest
+
+	local fn = path.basename(pt)
+	if not fn:match(filePattern) then return end
+
+	if not flatten then
+		newDest = pt:gsub(inputRoot:EscapePatterns(), outputRoot)
+		fs.mkdirpSync(path.dirname(newDest))
+	else
+		newDest = path.join(outputRoot, fn)
+	end
 
 	if toConv[path.extname(pt):lower()] then
 		convQueue[#convQueue + 1] = {pt, newDest}
@@ -250,7 +289,6 @@ end
 
 local function recurse(pt, fn)
 	fs.scandir(pt, function(err, iter)
-
 		if err then print(err) return end
 
 		local recs = 0
@@ -258,7 +296,15 @@ local function recurse(pt, fn)
 		for fl, typ in iter do
 			if typ == "file" then
 				handleFile(path.join(pt, fl))
-			elseif typ == "directory" and path.relative(path.join(pt, fl), outputRoot) ~= "" then
+			elseif typ == "directory" then
+				local fullPath = path.join(pt, fl)
+
+				local isOutput = path.relative(fullPath, outputRoot) == ""
+				if isOutput then goto iterNext end
+
+				local matches = fullPath:match(dirPattern)
+				if not matches then goto iterNext end
+
 				recs = recs + 1
 
 				recurse(path.join(pt, fl), function()
@@ -269,6 +315,8 @@ local function recurse(pt, fn)
 					end
 				end)
 			end
+
+			::iterNext::
 		end
 
 		if recs == 0 and fn then
