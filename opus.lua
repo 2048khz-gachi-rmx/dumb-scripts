@@ -35,21 +35,29 @@ end
 local values = { -- { default, type }
 	["--bitrate"] = {value = 160, type = "number"},
 	["--maxjobs"] = {value = 6, type = "number"},
+
 	["--outdir"] =  {value = "./output", type = "string"},
 	["--indir"] =   {value = uv.cwd(), type = "string"},
+
 	["--directorypattern"] = {value = ".", type = patternValidator},
 	["--filepattern"] = {value = ".", type = patternValidator},
+	["--fullpattern"] = {value = nil, type = patternValidator}
 }
 
 local aliases = {
-	["-b"] = "--bitrate",
 	["-d"] = "--dryrun",
+	["-f"] = "--flatten",
+	["-c"] = "--convertonly",
+
+	["-b"] = "--bitrate",
+	["-j"] = "--maxjobs",
+
 	["-o"] = "--outdir",
 	["--output"] = "--outdir",
 	["-i"] = "--indir",
 	["--input"] = "--indir",
-	["-f"] = "--flatten",
-	["-c"] = "--convertonly",
+
+	["-p"] = "--fullpattern",
 	["-fp"] = "--filepattern",
 	["-dp"] = "--directorypattern",
 	["--dirpattern"] = "--directorypattern",
@@ -131,6 +139,23 @@ local opus_bitrate = values["--bitrate"].value
 local flatten = flags["--flatten"]
 local convOnly = flags["--convertonly"]
 local filePattern, dirPattern = values["--filepattern"].value, values["--directorypattern"].value
+local fullPattern = values["--fullpattern"].value
+
+do
+	if fullPattern then
+		local fpNotDefault, dpNotDefault = filePattern ~= ".", dirPattern ~= "."
+		if fpNotDefault or dpNotDefault then
+			local which = fpNotDefault and dpNotDefault and "file & directory"
+				or fpNotDefault and "file"
+				or dpNotDefault and "directory"
+
+			print(("WARNING: Overriding %s patterns with the full pattern!"):format(which))
+		end
+
+		-- All file/dir patterns should pass; fullpatterns are matched separately on the whole path
+		filePattern, dirPattern = ".", "."
+	end
+end
 
 print(("Converting from `%s`."):format(inputRoot))
 print(("Converting to %dkbps (%d simultaneous jobs)"):format(opus_bitrate, maxJobs))
@@ -272,6 +297,7 @@ function handleFile(pt)
 
 	local fn = path.basename(pt)
 	if not fn:match(filePattern) then return end
+	if fullPattern and not pt:match(fullPattern) then return end
 
 	if not flatten then
 		newDest = pt:gsub(inputRoot:EscapePatterns(), outputRoot)
