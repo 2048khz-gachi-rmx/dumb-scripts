@@ -31,7 +31,6 @@ local function patternValidator(pattern)
 	end
 end
 
-
 local values = { -- { default, type }
 	["--bitrate"] = {value = 160, type = "number"},
 	["--maxjobs"] = {value = 6, type = "number"},
@@ -48,6 +47,7 @@ local aliases = {
 	["-d"] = "--dryrun",
 	["-f"] = "--flatten",
 	["-c"] = "--convertonly",
+	["-v"] = "--verbose",
 
 	["-b"] = "--bitrate",
 	["-j"] = "--maxjobs",
@@ -61,13 +61,21 @@ local aliases = {
 	["-fp"] = "--filepattern",
 	["-dp"] = "--directorypattern",
 	["--dirpattern"] = "--directorypattern",
+	["-ip"] = "--case-insensitive",
 }
 
 local flags = {
 	["--dryrun"] = false,
 	["--flatten"] = false,
-	["--convertonly"] = true,
+	["--convertonly"] = false,
+	["--case-insensitive"] = false,
+	["--verbose"] = false,
 }
+
+local function vprint(...)
+	if not flags["--verbose"] then return end
+	print(...)
+end
 
 local parsers = {
 	-- ["--flag"] = function(arg, valueTable, oldValue) end
@@ -140,6 +148,7 @@ local flatten = flags["--flatten"]
 local convOnly = flags["--convertonly"]
 local filePattern, dirPattern = values["--filepattern"].value, values["--directorypattern"].value
 local fullPattern = values["--fullpattern"].value
+local caseInsensitive = flags["--case-insensitive"]
 
 do
 	if fullPattern then
@@ -283,7 +292,7 @@ function convert(pt, to)
 end
 
 function copy(pt, to)
-	if convOnly then return end
+	if convOnly or DRY_RUN then return end
 
 	local newFd, ab1 = fs.openSync(to, "w")
 	local oldFd, ab2 = fs.openSync(pt, "r")
@@ -291,19 +300,34 @@ function copy(pt, to)
 	fs.sendfile(newFd, oldFd, 0, 10e9, checkErr)
 end
 
+local function caseMatch(str, pattern)
+	if caseInsensitive then
+		str = str:lower()
+		pattern = pattern:lower() -- i hope this works like i intend it to
+	end
+
+	local matched = str:match(pattern)
+	vprint(matched and "Matched:" or "Ignored:", str)
+
+	return str:match(pattern)
+end
 
 function handleFile(pt)
 	local newDest
 
 	local fn = path.basename(pt)
-	if not fn:match(filePattern) then return end
-	if fullPattern and not pt:match(fullPattern) then return end
+
+	if not caseMatch(fn, filePattern) then return end
+	if fullPattern and not caseMatch(pt, fullPattern) then return end
 
 	if not flatten then
 		newDest = pt:gsub(inputRoot:EscapePatterns(), outputRoot)
-		fs.mkdirpSync(path.dirname(newDest))
 	else
 		newDest = path.join(outputRoot, fn)
+	end
+
+	if not DRY_RUN then
+		fs.mkdirpSync(path.dirname(newDest))
 	end
 
 	if toConv[path.extname(pt):lower()] then
@@ -313,41 +337,43 @@ function handleFile(pt)
 	end
 end
 
-local function recurse(pt, fn)
+local recurse
+
+local function handleDirectory(fullPath, onRecursedCb)
+	local isOutput = path.relative(fullPath, outputRoot) == ""
+	if isOutput then return end
+
+	local matches = fullPath:match(dirPattern)
+	if not matches then return end
+
+	recurse(fullPath, onRecursedCb)
+
+	return true
+end
+
+function recurse(pt, onRecursedCb)
+	local recs = 1 -- amt of currently enqueued scandirs, recursive
+
+	local function decrCount()
+		recs = recs - 1
+
+		if recs == 0 and onRecursedCb then
+			onRecursedCb()
+		end
+	end
+
 	fs.scandir(pt, function(err, iter)
 		if err then print(err) return end
-
-		local recs = 0
 
 		for fl, typ in iter do
 			if typ == "file" then
 				handleFile(path.join(pt, fl))
 			elseif typ == "directory" then
-				local fullPath = path.join(pt, fl)
-
-				local isOutput = path.relative(fullPath, outputRoot) == ""
-				if isOutput then goto iterNext end
-
-				local matches = fullPath:match(dirPattern)
-				if not matches then goto iterNext end
-
-				recs = recs + 1
-
-				recurse(path.join(pt, fl), function()
-					recs = recs - 1
-
-					if recs == 0 and fn then
-						fn()
-					end
-				end)
+				recs = recs + (handleDirectory(path.join(pt, fl), decrCount) and 1 or 0)
 			end
-
-			::iterNext::
 		end
 
-		if recs == 0 and fn then
-			fn()
-		end
+		decrCount()
 	end)
 end
 
