@@ -81,9 +81,16 @@ local workshopConfig = "WorkshopItems=%s"
 local modnameConfig = "Mods=%s"
 
 local function collect(fmt, key)
-	local arr = {}
+	-- map is for deduping
+	local arr, map = {}, {}
+
 	for _, mod in pairs(modLists[wantedList]) do
-		table.insert(arr, mod[key])
+		local v = mod[key]
+
+		if v and not map[v] then
+			map[v] = true
+			table.insert(arr, v)
+		end
 	end
 
 	return fmt:format(table.concat(arr, ";"))
